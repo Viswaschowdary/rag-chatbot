@@ -7,3 +7,4 @@ transformers
 chromadb
 torch
 pypdf
+langchain-chroma
