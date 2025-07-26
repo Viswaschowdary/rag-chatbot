@@ -1,73 +1,65 @@
 import os
 import streamlit as st
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_community.llms import HuggingFacePipeline
-from langchain_chroma import Chroma
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from langchain.llms import HuggingFacePipeline
+from transformers import pipeline
 
-# ----------------------------- CONFIG -----------------------------
-st.set_page_config(page_title="Flan-T5 RAG Chatbot", page_icon="🤖")
-st.title("🤖 Flan-T5 RAG Chatbot (with Memory & Sidebar)")
+st.set_page_config(page_title="Flan-T5 RAG Chatbot", page_icon="🧠")
 
-# ----------------------------- SIDEBAR -----------------------------
-st.sidebar.title("📁 Upload & Settings")
+# Sidebar
+st.sidebar.title("📄 Upload PDF")
+uploaded_file = st.sidebar.file_uploader("Upload your PDF", type="pdf")
+clear = st.sidebar.button("🧹 Clear Chat")
 
-uploaded_file = st.sidebar.file_uploader("Upload PDF/TXT", type=["pdf", "txt"])
-if st.sidebar.button("Clear Chat Memory"):
-    st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    st.success("✅ Chat memory cleared!")
+if clear:
+    st.session_state.memory.clear()
+    st.session_state.chat_history = []
 
-# ----------------------------- DOCUMENT LOADING -----------------------------
-docs = []
-if uploaded_file:
-    file_path = os.path.join("data", uploaded_file.name)
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getvalue())
-
-    if uploaded_file.name.endswith(".pdf"):
-        loader = PyPDFLoader(file_path)
-    else:
-        loader = TextLoader(file_path)
-
+# Load PDF
+if uploaded_file is not None:
+    with open("uploaded.pdf", "wb") as f:
+        f.write(uploaded_file.read())
+    loader = PyPDFLoader("uploaded.pdf")
     docs = loader.load()
-
-# ----------------------------- SPLIT & STORE -----------------------------
-if docs:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_documents(docs)
-
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = Chroma.from_documents(chunks, embedding=embeddings, persist_directory="db")
 else:
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vectorstore = Chroma(persist_directory="db", embedding_function=embeddings)
+    docs = []
 
-# ----------------------------- MEMORY -----------------------------
-if "memory" not in st.session_state:
-    st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+# Chunking
+splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+chunks = splitter.split_documents(docs)
 
-# ----------------------------- LLM & QA Chain -----------------------------
-model_id = "google/flan-t5-base"
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
+# Embeddings & VectorStore
+embedding = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+db = FAISS.from_documents(chunks, embedding)
 
-flan_pipeline = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
-llm = HuggingFacePipeline(pipeline=flan_pipeline)
+# Memory
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-qa = ConversationalRetrievalChain.from_llm(
-    llm=llm,
-    retriever=vectorstore.as_retriever(),
-    memory=st.session_state.memory,
-    return_source_documents=False
-)
+# LLM
+llm_pipeline = pipeline("text2text-generation", model="google/flan-t5-base", max_length=512)
+llm = HuggingFacePipeline(pipeline=llm_pipeline)
 
-# ----------------------------- CHAT -----------------------------
+# QA Chain
+qa = ConversationalRetrievalChain.from_llm(llm, retriever=db.as_retriever(), memory=memory)
+
+# UI
+st.title("🤖 Flan-T5 RAG Chatbot (FAISS)")
+st.write("Ask a question based on your uploaded PDF.")
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
 query = st.text_input("Ask a question:")
 
 if query:
     result = qa.invoke({"question": query})
-    st.write("🤖 Bot:", result["answer"])
+    st.session_state.chat_history.append((query, result["answer"]))
+
+for i, (q, a) in enumerate(st.session_state.chat_history):
+    st.markdown(f"**🧑 You:** {q}")
+    st.markdown(f"**🤖 Bot:** {a}")

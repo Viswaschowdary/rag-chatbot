@@ -1,11 +1,7 @@
 streamlit
-langchain
-langchain-community
-langchain-core
-sentence-transformers
 transformers
 torch
-chromadb
+langchain
+langchain-community
+faiss-cpu
 pypdf
-watchdog
-langchain-chroma
