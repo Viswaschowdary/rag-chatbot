@@ -8,3 +8,4 @@ torch
 chromadb
 pypdf
 watchdog
+langchain-chroma
